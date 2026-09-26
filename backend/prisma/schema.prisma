@@ -1,0 +1,132 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- ENUMS ----------
+
+enum Role {
+  PASSENGER
+  DRIVER
+}
+
+enum RideStatus {
+  REQUESTED
+  MATCHED
+  DRIVER_ARRIVED
+  STARTED
+  COMPLETED
+  CANCELLED
+}
+
+enum PoolStatus {
+  OPEN        // still accepting more passengers up to capacity
+  FULL        // capacity reached, no more matches
+  IN_PROGRESS // driver has started the trip
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  TESLAPAY
+}
+
+// ---------- CORE ENTITIES ----------
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+
+  // Passenger side
+  rideRequests RideRequest[]
+
+  // Driver side
+  vehicle      Vehicle?
+
+  @@index([email])
+}
+
+model Vehicle {
+  id        String   @id @default(uuid())
+  driverId  String   @unique
+  driver    User     @relation(fields: [driverId], references: [id])
+  name      String   // e.g. "Bullet"
+  capacity  Int      // fixed seat count, e.g. 3
+  isOnline  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  pools     Pool[]
+}
+
+// A Pool = one active Tesla trip that can hold 1..capacity ride requests
+model Pool {
+  id          String     @id @default(uuid())
+  vehicleId   String
+  vehicle     Vehicle    @relation(fields: [vehicleId], references: [id])
+  status      PoolStatus @default(OPEN)
+  seatsUsed   Int        @default(0)   // denormalized counter, updated in a transaction
+  createdAt   DateTime   @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  rideRequests RideRequest[]
+
+  @@index([status])
+}
+
+// One passenger's request; becomes a member of a Pool once matched
+model RideRequest {
+  id              String     @id @default(uuid())
+  passengerId     String
+  passenger       User       @relation(fields: [passengerId], references: [id])
+
+  pickupZone      String     // predefined Dhaka area, e.g. "Banani"
+  destinationZone String     // e.g. "Mohakhali"
+  pickupLat       Float?
+  pickupLng       Float?
+  destLat         Float?
+  destLng         Float?
+
+  seats           Int        @default(1)
+
+  poolId          String?
+  pool            Pool?      @relation(fields: [poolId], references: [id])
+
+  status          RideStatus @default(REQUESTED)
+
+  baseFare        Int        // stored in paisa (integer) — see note below
+  distanceCharge  Int
+  poolDiscount    Int        @default(0)
+  finalFare       Int        // baseFare + distanceCharge - poolDiscount
+
+  paymentMethod   PaymentMethod @default(CASH)
+  paid            Boolean    @default(false)
+
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  statusHistory   RideStatusHistory[]
+
+  @@index([status])
+  @@index([poolId])
+}
+
+// Immutable audit trail — one row per transition
+model RideStatusHistory {
+  id            String      @id @default(uuid())
+  rideRequestId String
+  rideRequest   RideRequest @relation(fields: [rideRequestId], references: [id])
+  fromStatus    RideStatus?
+  toStatus      RideStatus
+  changedAt     DateTime    @default(now())
+  note          String?
+}
