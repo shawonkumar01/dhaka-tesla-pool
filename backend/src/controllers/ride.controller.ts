@@ -24,7 +24,6 @@ export async function createRideRequest(req: Request, res: Response) {
   }
 
   const result = await prisma.$transaction(async (tx) => {
-   
     const candidatePools = await tx.pool.findMany({
       where: { status: "OPEN" },
       include: { vehicle: true, rideRequests: true },
@@ -49,7 +48,6 @@ export async function createRideRequest(req: Request, res: Response) {
     }
 
     if (matchedPool) {
-    
       const locked: { id: string; seatsUsed: number; capacity: number }[] =
         await tx.$queryRaw`
           SELECT p.id, p."seatsUsed", v.capacity
@@ -104,9 +102,14 @@ export async function createRideRequest(req: Request, res: Response) {
     // No compatible pool with room — find any online vehicle with enough
     // total capacity and open a new pool on it.
     const availableVehicle = await tx.vehicle.findFirst({
-      where: { isOnline: true, capacity: { gte: seats } },
+      where: {
+        isOnline: true,
+        capacity: { gte: seats },
+        pools: {
+          none: { status: { in: ["OPEN", "FULL", "IN_PROGRESS"] } },
+        },
+      },
     });
-
     const fare = calculateFare(false);
 
     if (!availableVehicle) {
