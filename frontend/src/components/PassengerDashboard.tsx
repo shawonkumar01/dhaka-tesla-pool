@@ -26,6 +26,22 @@ interface Ride {
   createdAt: string;
 }
 
+interface Fare {
+  baseFare: number;
+  distanceCharge: number;
+  poolDiscount: number;
+  finalFare: number;
+}
+
+interface Estimate {
+  distanceKm: number;
+  solo: Fare;
+  pooled: Fare;
+}
+
+// Money is stored as integer poysha; convert to Taka only for display
+const taka = (poysha: number) => `৳${(poysha / 100).toFixed(2)}`;
+
 const statusColors: Record<string, string> = {
   REQUESTED: "bg-amber-100 text-amber-800",
   MATCHED: "bg-yellow-100 text-yellow-800",
@@ -53,6 +69,7 @@ export default function PassengerDashboard() {
   const [destinationZone, setDestinationZone] = useState(ZONES[1]);
   const [seats, setSeats] = useState(1);
   const [rides, setRides] = useState<Ride[]>([]);
+  const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -70,6 +87,24 @@ export default function PassengerDashboard() {
     const interval = setInterval(fetchRides, 4000); // simple polling for status updates
     return () => clearInterval(interval);
   }, []);
+
+  // Refetch the fare estimate whenever the form changes
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get("/rides/estimate", {
+        params: { pickupZone, destinationZone, seats },
+      })
+      .then((res) => {
+        if (!cancelled) setEstimate(res.data);
+      })
+      .catch(() => {
+        if (!cancelled) setEstimate(null);
+      });
+    return () => {
+      cancelled = true; // ignore stale responses when the form changes quickly
+    };
+  }, [pickupZone, destinationZone, seats]);
 
   async function handleRequestRide(e: React.FormEvent) {
     e.preventDefault();
@@ -145,10 +180,33 @@ export default function PassengerDashboard() {
               min={1}
               max={3}
               value={seats}
-              onChange={(e) => setSeats(Number(e.target.value))}
+              onChange={(e) =>
+                setSeats(Math.min(3, Math.max(1, Number(e.target.value) || 1)))
+              }
               className="w-full border border-gray-200 rounded-lg px-3 py-2"
             />
           </div>
+
+          {estimate && (
+            <div className="rounded-xl border border-green-100 bg-green-50 p-4 text-sm">
+              <div className="flex justify-between items-baseline">
+                <span className="text-gray-600">
+                  Estimated fare · {estimate.distanceKm.toFixed(2)} km
+                </span>
+                <span className="text-lg font-semibold text-gray-900">
+                  {taka(estimate.solo.finalFare)}
+                </span>
+              </div>
+              <p className="mt-1 text-green-700">
+                Share the ride and pay {taka(estimate.pooled.finalFare)} (save{" "}
+                {taka(estimate.pooled.poolDiscount)})
+              </p>
+              <p className="mt-2 text-xs text-gray-400">
+                Base {taka(estimate.solo.baseFare)} + distance{" "}
+                {taka(estimate.solo.distanceCharge)}, minus 20% if pooled
+              </p>
+            </div>
+          )}
 
           {error && <p className="text-red-500 text-sm">{error}</p>}
 
@@ -178,7 +236,7 @@ export default function PassengerDashboard() {
                   {ride.pickupZone} → {ride.destinationZone}
                 </p>
                 <p className="text-sm text-gray-500">
-                  {ride.seats} seat(s) · ৳{(ride.finalFare / 100).toFixed(2)}
+                  {ride.seats} seat(s) · {taka(ride.finalFare)}
                   {ride.poolId &&
                     !["CANCELLED", "COMPLETED"].includes(ride.status) &&
                     " · Pooled"}
