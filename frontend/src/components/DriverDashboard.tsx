@@ -42,9 +42,17 @@ interface Vehicle {
 }
 
 const NEXT_LABEL: Record<string, string> = {
-  MATCHED: "Mark Driver Arrived",
+  MATCHED: "Accept Pool",
+  ACCEPTED: "Mark Driver Arrived",
   DRIVER_ARRIVED: "Start Trip",
   STARTED: "Complete Trip",
+};
+
+const STAGE_LABEL: Record<string, string> = {
+  MATCHED: "Awaiting your response",
+  ACCEPTED: "Accepted",
+  DRIVER_ARRIVED: "Arrived at pickup",
+  STARTED: "Trip in progress",
 };
 
 export default function DriverDashboard() {
@@ -110,6 +118,7 @@ export default function DriverDashboard() {
 
   async function advancePool(poolId: string) {
     setBusy(true);
+    setError("");
     try {
       await api.post(`/driver/pools/${poolId}/advance`);
       await fetchStatus();
@@ -120,7 +129,19 @@ export default function DriverDashboard() {
     }
   }
 
-  // --- No vehicle registered yet: show registration form ---
+  async function declinePool(poolId: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/driver/pools/${poolId}/decline`);
+      await fetchStatus();
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Failed to decline pool");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (notFound) {
     return (
       <div className="bg-white p-6 rounded-2xl shadow-sm max-w-sm">
@@ -211,25 +232,47 @@ export default function DriverDashboard() {
       <section>
         <h2 className="font-semibold text-lg mb-4">Current pool</h2>
         {!activePool && (
-          <p className="text-gray-400 text-sm">No active pool right now.</p>
+          <p className="text-gray-400 text-sm">
+            {vehicle.isOnline
+              ? "No active pool right now. Waiting for requests in your zone."
+              : "You are offline. Go online to receive requests."}
+          </p>
         )}
 
         {activePool && (
           <div className="bg-white p-6 rounded-2xl shadow-sm space-y-4">
-            <div className="flex justify-between items-center">
-              <span className="text-sm font-medium text-gray-500">
-                {activePool.seatsUsed}/{vehicle.capacity} seats ·{" "}
-                {activePool.status}
-              </span>
-              {currentStatus && NEXT_LABEL[currentStatus] && (
-                <button
-                  onClick={() => advancePool(activePool.id)}
-                  disabled={busy}
-                  className="bg-black text-white text-sm px-4 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-50"
-                >
-                  {NEXT_LABEL[currentStatus]}
-                </button>
-              )}
+            <div className="flex justify-between items-center gap-3">
+              <div>
+                <p className="text-sm font-medium text-gray-700">
+                  {activePool.seatsUsed}/{vehicle.capacity} seats
+                </p>
+                {currentStatus && (
+                  <p className="text-xs text-gray-400">
+                    {STAGE_LABEL[currentStatus] ?? currentStatus}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                {currentStatus === "MATCHED" && (
+                  <button
+                    onClick={() => declinePool(activePool.id)}
+                    disabled={busy}
+                    className="text-sm px-4 py-2 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    Decline
+                  </button>
+                )}
+                {currentStatus && NEXT_LABEL[currentStatus] && (
+                  <button
+                    onClick={() => advancePool(activePool.id)}
+                    disabled={busy}
+                    className="bg-green-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {NEXT_LABEL[currentStatus]}
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="divide-y">

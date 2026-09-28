@@ -26,6 +26,28 @@ interface Ride {
   createdAt: string;
 }
 
+const statusColors: Record<string, string> = {
+  REQUESTED: "bg-amber-100 text-amber-800",
+  MATCHED: "bg-yellow-100 text-yellow-800",
+  ACCEPTED: "bg-teal-100 text-teal-800",
+  DRIVER_ARRIVED: "bg-blue-100 text-blue-800",
+  STARTED: "bg-indigo-100 text-indigo-800",
+  COMPLETED: "bg-green-100 text-green-800",
+  CANCELLED: "bg-gray-100 text-gray-500",
+};
+
+const statusLabels: Record<string, string> = {
+  REQUESTED: "LOOKING FOR A DRIVER",
+  MATCHED: "AWAITING DRIVER",
+  ACCEPTED: "DRIVER ACCEPTED",
+  DRIVER_ARRIVED: "DRIVER ARRIVED",
+  STARTED: "IN PROGRESS",
+  COMPLETED: "COMPLETED",
+  CANCELLED: "CANCELLED",
+};
+
+const CANCELLABLE = ["REQUESTED", "MATCHED", "ACCEPTED", "DRIVER_ARRIVED"];
+
 export default function PassengerDashboard() {
   const [pickupZone, setPickupZone] = useState(ZONES[0]);
   const [destinationZone, setDestinationZone] = useState(ZONES[1]);
@@ -35,8 +57,12 @@ export default function PassengerDashboard() {
   const [submitting, setSubmitting] = useState(false);
 
   async function fetchRides() {
-    const res = await api.get("/rides");
-    setRides(res.data.rides);
+    try {
+      const res = await api.get("/rides");
+      setRides(res.data.rides);
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Failed to load rides");
+    }
   }
 
   useEffect(() => {
@@ -55,8 +81,9 @@ export default function PassengerDashboard() {
     } catch (err: any) {
       setError(
         err.response?.data?.error?.formErrors?.[0] ||
-          err.response?.data?.error ||
-          "Request failed",
+          (typeof err.response?.data?.error === "string"
+            ? err.response.data.error
+            : "Request failed"),
       );
     } finally {
       setSubmitting(false);
@@ -64,6 +91,7 @@ export default function PassengerDashboard() {
   }
 
   async function handleCancel(id: string) {
+    setError("");
     try {
       await api.post(`/rides/${id}/cancel`);
       await fetchRides();
@@ -71,15 +99,6 @@ export default function PassengerDashboard() {
       setError(err.response?.data?.error || "Cancel failed");
     }
   }
-
-  const statusColors: Record<string, string> = {
-    REQUESTED: "bg-amber-100 text-amber-800",
-    MATCHED: "bg-green-100 text-green-800",
-    DRIVER_ARRIVED: "bg-blue-100 text-blue-800",
-    STARTED: "bg-indigo-100 text-indigo-800",
-    COMPLETED: "bg-green-100 text-green-800",
-    CANCELLED: "bg-gray-100 text-gray-500",
-  };
 
   return (
     <div className="space-y-8">
@@ -92,7 +111,7 @@ export default function PassengerDashboard() {
               <select
                 value={pickupZone}
                 onChange={(e) => setPickupZone(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2"
               >
                 {ZONES.map((z) => (
                   <option key={z} value={z}>
@@ -108,7 +127,7 @@ export default function PassengerDashboard() {
               <select
                 value={destinationZone}
                 onChange={(e) => setDestinationZone(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2"
               >
                 {ZONES.map((z) => (
                   <option key={z} value={z}>
@@ -127,7 +146,7 @@ export default function PassengerDashboard() {
               max={3}
               value={seats}
               onChange={(e) => setSeats(Number(e.target.value))}
-              className="w-full border rounded-lg px-3 py-2"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2"
             />
           </div>
 
@@ -136,7 +155,7 @@ export default function PassengerDashboard() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-black text-white rounded-lg py-2 font-medium hover:bg-gray-800 disabled:opacity-50"
+            className="w-full bg-green-600 text-white rounded-lg py-2 font-medium hover:bg-green-700 disabled:opacity-50"
           >
             {submitting ? "Requesting..." : "Request Ride"}
           </button>
@@ -160,16 +179,20 @@ export default function PassengerDashboard() {
                 </p>
                 <p className="text-sm text-gray-500">
                   {ride.seats} seat(s) · ৳{(ride.finalFare / 100).toFixed(2)}
-                  {ride.poolId && " · Pooled"}
+                  {ride.poolId &&
+                    !["CANCELLED", "COMPLETED"].includes(ride.status) &&
+                    " · Pooled"}
                 </p>
               </div>
               <div className="flex items-center gap-3">
                 <span
-                  className={`text-xs font-medium px-2 py-1 rounded-full ${statusColors[ride.status]}`}
+                  className={`text-xs font-medium px-2 py-1 rounded-full ${
+                    statusColors[ride.status] ?? "bg-gray-100 text-gray-500"
+                  }`}
                 >
-                  {ride.status.replace("_", " ")}
+                  {statusLabels[ride.status] ?? ride.status}
                 </span>
-                {["REQUESTED", "MATCHED"].includes(ride.status) && (
+                {CANCELLABLE.includes(ride.status) && (
                   <button
                     onClick={() => handleCancel(ride.id)}
                     className="text-xs text-red-500 underline"
