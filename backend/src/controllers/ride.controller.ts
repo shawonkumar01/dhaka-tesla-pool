@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import prisma from "../lib/prisma";
 import { isZoneValid, ZONE_COORDS } from "../lib/zones";
-import { calculateFare } from "../lib/fare";
+import { calculateFare, distanceHundredthsKm } from "../lib/fare";
 import { tryMatch, safeDispatch } from "../lib/matching";
 
 const createRideSchema = z.object({
@@ -85,11 +85,14 @@ export async function estimateFare(req: Request, res: Response) {
     seats: Number(req.query.seats ?? 1),
   });
   if (!parsed.success) return res.status(400).json({ error: "Invalid query" });
+
   const { pickupZone, destinationZone, seats } = parsed.data;
   if (!isZoneValid(pickupZone) || !isZoneValid(destinationZone)) {
     return res.status(400).json({ error: "Invalid zone" });
   }
+
   res.json({
+    distanceKm: distanceHundredthsKm(pickupZone, destinationZone) / 100,
     solo: calculateFare(pickupZone, destinationZone, seats, false),
     pooled: calculateFare(pickupZone, destinationZone, seats, true),
   });
