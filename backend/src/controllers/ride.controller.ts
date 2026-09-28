@@ -1,8 +1,9 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import prisma from "../lib/prisma";
-import { isZoneValid, areDestinationsCompatible } from "../lib/zones";
+import { isZoneValid } from "../lib/zones";
 import { calculateFare } from "../lib/fare";
+import { tryMatch, safeDispatch } from "../lib/matching";
 
 const createRideSchema = z.object({
   pickupZone: z.string(),
@@ -12,9 +13,8 @@ const createRideSchema = z.object({
 
 export async function createRideRequest(req: Request, res: Response) {
   const parsed = createRideSchema.safeParse(req.body);
-  if (!parsed.success) {
+  if (!parsed.success)
     return res.status(400).json({ error: parsed.error.flatten() });
-  }
 
   const { pickupZone, destinationZone, seats } = parsed.data;
   const passengerId = req.user!.userId;
@@ -23,137 +23,25 @@ export async function createRideRequest(req: Request, res: Response) {
     return res.status(400).json({ error: "Invalid zone" });
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    const candidatePools = await tx.pool.findMany({
-      where: { status: "OPEN" },
-      include: { vehicle: true, rideRequests: true },
-    });
+  const fare = calculateFare(false); // solo fare; tryMatch applies the discount if pooled
 
-    let matchedPool = null;
-
-    for (const pool of candidatePools) {
-      const hasRoom = pool.seatsUsed + seats <= pool.vehicle.capacity;
-      if (!hasRoom) continue;
-
-      const compatible = pool.rideRequests.every(
-        (r) =>
-          r.pickupZone === pickupZone &&
-          areDestinationsCompatible(r.destinationZone, destinationZone),
-      );
-
-      if (compatible) {
-        matchedPool = pool;
-        break;
-      }
-    }
-
-    if (matchedPool) {
-      const locked: { id: string; seatsUsed: number; capacity: number }[] =
-        await tx.$queryRaw`
-          SELECT p.id, p."seatsUsed", v.capacity
-          FROM "Pool" p
-          JOIN "Vehicle" v ON v.id = p."vehicleId"
-          WHERE p.id = ${matchedPool.id}
-          FOR UPDATE
-        `;
-
-      const lockedPool = locked[0];
-      if (!lockedPool || lockedPool.seatsUsed + seats > lockedPool.capacity) {
-        // Someone else took the seat between our check and the lock — fall through to new pool
-        matchedPool = null;
-      } else {
-        await tx.pool.update({
-          where: { id: matchedPool.id },
-          data: { seatsUsed: { increment: seats } },
-        });
-
-        const isNowFull = lockedPool.seatsUsed + seats >= lockedPool.capacity;
-        if (isNowFull) {
-          await tx.pool.update({
-            where: { id: matchedPool.id },
-            data: { status: "FULL" },
-          });
-        }
-
-        const fare = calculateFare(true);
-
-        const rideRequest = await tx.rideRequest.create({
-          data: {
-            passengerId,
-            pickupZone,
-            destinationZone,
-            seats,
-            poolId: matchedPool.id,
-            status: "MATCHED",
-            ...fare,
-            statusHistory: {
-              create: [
-                { toStatus: "REQUESTED" },
-                { fromStatus: "REQUESTED", toStatus: "MATCHED" },
-              ],
-            },
-          },
-        });
-
-        return rideRequest;
-      }
-    }
-
-    // No compatible pool with room — find any online vehicle with enough
-    // total capacity and open a new pool on it.
-    const availableVehicle = await tx.vehicle.findFirst({
-      where: {
-        isOnline: true,
-        capacity: { gte: seats },
-        currentZone: pickupZone, // only vehicles currently in the passenger's pickup zone
-        pools: { none: { status: { in: ["OPEN", "FULL", "IN_PROGRESS"] } } },
-      },
-    });
-    const fare = calculateFare(false);
-
-    if (!availableVehicle) {
-      // No driver online — request sits unmatched, to be picked up later.
-      return tx.rideRequest.create({
-        data: {
-          passengerId,
-          pickupZone,
-          destinationZone,
-          seats,
-          status: "REQUESTED",
-          ...fare,
-          statusHistory: { create: [{ toStatus: "REQUESTED" }] },
-        },
-      });
-    }
-
-    const newPool = await tx.pool.create({
-      data: {
-        vehicleId: availableVehicle.id,
-        status: "OPEN",
-        seatsUsed: seats,
-      },
-    });
-
-    return tx.rideRequest.create({
+  const ride = await prisma.$transaction(async (tx) => {
+    const created = await tx.rideRequest.create({
       data: {
         passengerId,
         pickupZone,
         destinationZone,
         seats,
-        poolId: newPool.id,
-        status: "MATCHED",
+        status: "REQUESTED",
         ...fare,
-        statusHistory: {
-          create: [
-            { toStatus: "REQUESTED" },
-            { fromStatus: "REQUESTED", toStatus: "MATCHED" },
-          ],
-        },
+        statusHistory: { create: [{ toStatus: "REQUESTED" }] },
       },
     });
+    await tryMatch(tx, created);
+    return tx.rideRequest.findUniqueOrThrow({ where: { id: created.id } });
   });
 
-  res.status(201).json({ rideRequest: result });
+  res.status(201).json({ rideRequest: ride });
 }
 
 export async function getMyRides(req: Request, res: Response) {
@@ -203,12 +91,15 @@ export async function cancelRide(req: Request, res: Response) {
 
   const updated = await prisma.$transaction(async (tx) => {
     if (ride.poolId) {
-      await tx.pool.update({
+      const pool = await tx.pool.update({
         where: { id: ride.poolId },
-        data: { seatsUsed: { decrement: ride.seats }, status: "OPEN" },
+        data: { seatsUsed: { decrement: ride.seats } },
+      });
+      await tx.pool.update({
+        where: { id: pool.id },
+        data: { status: pool.seatsUsed <= 0 ? "CANCELLED" : "OPEN" },
       });
     }
-
     return tx.rideRequest.update({
       where: { id },
       data: {
@@ -220,5 +111,6 @@ export async function cancelRide(req: Request, res: Response) {
     });
   });
 
+  await safeDispatch(); // a freed seat may fit someone who is waiting
   res.json({ ride: updated });
 }

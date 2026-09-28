@@ -6,6 +6,7 @@ import {
   getRideHistory,
   advancePoolStatus,
   registerVehicle,
+  declinePool,
 } from "../controllers/driver.controller";
 
 const router = Router();
@@ -17,5 +18,6 @@ router.get("/me", getMyVehicleStatus);
 router.get("/history", getRideHistory);
 router.post("/pools/:poolId/advance", advancePoolStatus);
 router.post('/vehicle', registerVehicle);
+router.post("/pools/:poolId/decline", declinePool);
 
 export default router;

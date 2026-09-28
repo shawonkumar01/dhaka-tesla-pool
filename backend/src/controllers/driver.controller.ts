@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import prisma from "../lib/prisma";
+import { safeDispatch } from "../lib/matching";
+import { calculateFare } from "../lib/fare";
 
 // --- Go online/offline ---
 
@@ -41,6 +43,8 @@ export async function setOnlineStatus(req: Request, res: Response) {
     },
   });
 
+  if (parsed.data.isOnline) await safeDispatch(); // a driver coming online picks up waiting riders
+
   res.json({ vehicle: updated });
 }
 
@@ -56,6 +60,7 @@ export async function getMyVehicleStatus(req: Request, res: Response) {
         where: { status: { in: ["OPEN", "FULL", "IN_PROGRESS"] } },
         include: {
           rideRequests: {
+            where: { status: { not: "CANCELLED" } },
             include: {
               passenger: { select: { id: true, name: true, email: true } },
             },
@@ -131,7 +136,8 @@ export async function getRideHistory(req: Request, res: Response) {
 // --- Transition a pool's lifecycle (and all its ride requests together) ---
 
 const VALID_TRANSITIONS: Record<string, string> = {
-  MATCHED: "DRIVER_ARRIVED",
+  MATCHED: "ACCEPTED",
+  ACCEPTED: "DRIVER_ARRIVED",
   DRIVER_ARRIVED: "STARTED",
   STARTED: "COMPLETED",
 };
@@ -156,12 +162,11 @@ export async function advancePoolStatus(req: Request, res: Response) {
     return res.status(403).json({ error: "Not your vehicle's pool" });
   }
 
-  // All ride requests in a pool should be at the same status, since they
-  // move through the trip together. We use the first ride's status as the
-  // pool's effective status for transition purposes.
-  const currentRideStatus = pool.rideRequests[0]?.status;
+  // Cancelled riders keep their poolId, so they must be ignored here
+  const activeRides = pool.rideRequests.filter((r) => r.status !== "CANCELLED");
+  const currentRideStatus = activeRides[0]?.status;
   if (!currentRideStatus) {
-    return res.status(400).json({ error: "Pool has no ride requests" });
+    return res.status(400).json({ error: "Pool has no active ride requests" });
   }
 
   const nextStatus = VALID_TRANSITIONS[currentRideStatus];
@@ -172,14 +177,12 @@ export async function advancePoolStatus(req: Request, res: Response) {
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    // Update every ride request in the pool together
     await tx.rideRequest.updateMany({
-      where: { poolId: pool.id },
+      where: { poolId: pool.id, status: { not: "CANCELLED" } },
       data: { status: nextStatus as any },
     });
 
-    // Log history per ride request (updateMany can't create relations, so loop)
-    for (const ride of pool.rideRequests) {
+    for (const ride of activeRides) {
       await tx.rideStatusHistory.create({
         data: {
           rideRequestId: ride.id,
@@ -189,7 +192,6 @@ export async function advancePoolStatus(req: Request, res: Response) {
       });
     }
 
-    // Sync pool status for COMPLETED
     if (nextStatus === "COMPLETED") {
       await tx.pool.update({
         where: { id: pool.id },
@@ -202,8 +204,84 @@ export async function advancePoolStatus(req: Request, res: Response) {
       });
     }
 
-    return tx.rideRequest.findMany({ where: { poolId: pool.id } });
+    return tx.rideRequest.findMany({
+      where: { poolId: pool.id, status: { not: "CANCELLED" } },
+    });
   });
 
+  if (nextStatus === "COMPLETED") await safeDispatch(); // vehicle is free again
+
   res.json({ rides: result });
+}
+
+// --- Decline a pool that is still awaiting acceptance ---
+
+export async function declinePool(req: Request, res: Response) {
+  const poolId = req.params.poolId as string;
+  const driverId = req.user!.userId;
+
+  const vehicle = await prisma.vehicle.findUnique({ where: { driverId } });
+  if (!vehicle)
+    return res
+      .status(404)
+      .json({ error: "No vehicle registered for this driver" });
+
+  const pool = await prisma.pool.findUnique({
+    where: { id: poolId },
+    include: { rideRequests: true },
+  });
+  if (!pool) return res.status(404).json({ error: "Pool not found" });
+  if (pool.vehicleId !== vehicle.id)
+    return res.status(403).json({ error: "Not your vehicle's pool" });
+
+  // Only a pool where every live rider is still MATCHED can be declined
+  const activeRides = pool.rideRequests.filter((r) => r.status !== "CANCELLED");
+  if (
+    activeRides.length === 0 ||
+    activeRides.some((r) => r.status !== "MATCHED")
+  ) {
+    return res
+      .status(400)
+      .json({ error: "Only a pool awaiting acceptance can be declined" });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const soloFare = calculateFare(false);
+
+    for (const ride of activeRides) {
+      // Remember the decline so this ride is never offered to this vehicle again
+      await tx.poolDecline.create({
+        data: { rideRequestId: ride.id, vehicleId: vehicle.id },
+      });
+
+      // Riders go back to waiting and lose the pool discount
+      await tx.rideRequest.update({
+        where: { id: ride.id },
+        data: {
+          status: "REQUESTED",
+          poolId: null,
+          poolDiscount: soloFare.poolDiscount,
+          finalFare: soloFare.finalFare,
+        },
+      });
+
+      await tx.rideStatusHistory.create({
+        data: {
+          rideRequestId: ride.id,
+          fromStatus: "MATCHED",
+          toStatus: "REQUESTED",
+          note: "Driver declined pool",
+        },
+      });
+    }
+
+    await tx.pool.update({
+      where: { id: pool.id },
+      data: { status: "CANCELLED", seatsUsed: 0 },
+    });
+  });
+
+  await safeDispatch(); // offer these riders to the next eligible driver
+
+  res.json({ message: "Pool declined; riders returned to the waiting queue" });
 }
