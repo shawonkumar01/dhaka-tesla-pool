@@ -105,9 +105,8 @@ export async function createRideRequest(req: Request, res: Response) {
       where: {
         isOnline: true,
         capacity: { gte: seats },
-        pools: {
-          none: { status: { in: ["OPEN", "FULL", "IN_PROGRESS"] } },
-        },
+        currentZone: pickupZone, // only vehicles currently in the passenger's pickup zone
+        pools: { none: { status: { in: ["OPEN", "FULL", "IN_PROGRESS"] } } },
       },
     });
     const fare = calculateFare(false);

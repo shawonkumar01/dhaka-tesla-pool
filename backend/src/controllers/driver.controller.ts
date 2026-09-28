@@ -5,7 +5,10 @@ import prisma from "../lib/prisma";
 // --- Go online/offline ---
 
 export async function setOnlineStatus(req: Request, res: Response) {
-  const schema = z.object({ isOnline: z.boolean() });
+  const schema = z.object({
+    isOnline: z.boolean(),
+    currentZone: z.string().optional(),
+  });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success)
     return res.status(400).json({ error: parsed.error.flatten() });
@@ -18,9 +21,24 @@ export async function setOnlineStatus(req: Request, res: Response) {
       .status(404)
       .json({ error: "No vehicle registered for this driver" });
 
+  if (
+    parsed.data.isOnline &&
+    !parsed.data.currentZone &&
+    !vehicle.currentZone
+  ) {
+    return res
+      .status(400)
+      .json({ error: "currentZone is required to go online" });
+  }
+
   const updated = await prisma.vehicle.update({
     where: { driverId },
-    data: { isOnline: parsed.data.isOnline },
+    data: {
+      isOnline: parsed.data.isOnline,
+      ...(parsed.data.currentZone
+        ? { currentZone: parsed.data.currentZone }
+        : {}),
+    },
   });
 
   res.json({ vehicle: updated });
@@ -53,6 +71,37 @@ export async function getMyVehicleStatus(req: Request, res: Response) {
       .json({ error: "No vehicle registered for this driver" });
 
   res.json({ vehicle });
+}
+
+const registerVehicleSchema = z.object({
+  name: z.string().min(1),
+  capacity: z.number().int().min(1).max(4),
+});
+
+export async function registerVehicle(req: Request, res: Response) {
+  const parsed = registerVehicleSchema.safeParse(req.body);
+  if (!parsed.success)
+    return res.status(400).json({ error: parsed.error.flatten() });
+
+  const driverId = req.user!.userId;
+
+  const existing = await prisma.vehicle.findUnique({ where: { driverId } });
+  if (existing) {
+    return res
+      .status(409)
+      .json({ error: "You already have a registered vehicle" });
+  }
+
+  const vehicle = await prisma.vehicle.create({
+    data: {
+      driverId,
+      name: parsed.data.name,
+      capacity: parsed.data.capacity,
+      isOnline: false,
+    },
+  });
+
+  res.status(201).json({ vehicle });
 }
 
 // --- Ride history (all past pools/trips for this driver's vehicle) ---

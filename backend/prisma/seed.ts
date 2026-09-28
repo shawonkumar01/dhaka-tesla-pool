@@ -43,7 +43,13 @@ async function main() {
   });
 
   const bullet = await prisma.vehicle.create({
-    data: { driverId: jashim.id, name: "Bullet", capacity: 3, isOnline: true },
+    data: {
+      driverId: jashim.id,
+      name: "Bullet",
+      capacity: 3,
+      isOnline: true,
+      currentZone: "Banani",
+    },
   });
 
   const pool = await prisma.pool.create({

@@ -56,15 +56,16 @@ model User {
 }
 
 model Vehicle {
-  id        String   @id @default(uuid())
-  driverId  String   @unique
-  driver    User     @relation(fields: [driverId], references: [id])
-  name      String   // e.g. "Bullet"
-  capacity  Int      // fixed seat count, e.g. 3
-  isOnline  Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id          String   @id @default(uuid())
+  driverId    String   @unique
+  driver      User     @relation(fields: [driverId], references: [id])
+  name        String
+  capacity    Int
+  isOnline    Boolean  @default(false)
+  currentZone String?  // driver's current zone, set when going online; used for new-pool matching
+  createdAt   DateTime @default(now())
 
-  pools     Pool[]
+  pools       Pool[]
 }
 
 // A Pool = one active Tesla trip that can hold 1..capacity ride requests
