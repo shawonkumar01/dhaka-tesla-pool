@@ -52,6 +52,23 @@ async function main() {
     },
   });
 
+  const kamal = await prisma.user.create({
+    data: {
+      name: "Kamal",
+      email: "kamal@example.com",
+      passwordHash,
+      role: Role.DRIVER,
+    },
+  });
+  await prisma.vehicle.create({
+    data: {
+      driverId: kamal.id,
+      name: "Rocket",
+      capacity: 3,
+      isOnline: true,
+      currentZone: "Banani",
+    },
+  });
   const pool = await prisma.pool.create({
     data: { vehicleId: bullet.id, status: "OPEN", seatsUsed: 2 },
   });

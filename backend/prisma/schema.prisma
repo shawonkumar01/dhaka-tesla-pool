@@ -17,6 +17,7 @@ enum Role {
 enum RideStatus {
   REQUESTED
   MATCHED
+  ACCEPTED
   DRIVER_ARRIVED
   STARTED
   COMPLETED
@@ -24,8 +25,8 @@ enum RideStatus {
 }
 
 enum PoolStatus {
-  OPEN        // still accepting more passengers up to capacity
-  FULL        // capacity reached, no more matches
+  OPEN // still accepting more passengers up to capacity
+  FULL // capacity reached, no more matches
   IN_PROGRESS // driver has started the trip
   COMPLETED
   CANCELLED
@@ -50,7 +51,7 @@ model User {
   rideRequests RideRequest[]
 
   // Driver side
-  vehicle      Vehicle?
+  vehicle Vehicle?
 
   @@index([email])
 }
@@ -62,10 +63,11 @@ model Vehicle {
   name        String
   capacity    Int
   isOnline    Boolean  @default(false)
-  currentZone String?  // driver's current zone, set when going online; used for new-pool matching
+  currentZone String? // driver's current zone, set when going online; used for new-pool matching
   createdAt   DateTime @default(now())
 
-  pools       Pool[]
+  pools    Pool[]
+  declines PoolDecline[]
 }
 
 // A Pool = one active Tesla trip that can hold 1..capacity ride requests
@@ -74,7 +76,7 @@ model Pool {
   vehicleId   String
   vehicle     Vehicle    @relation(fields: [vehicleId], references: [id])
   status      PoolStatus @default(OPEN)
-  seatsUsed   Int        @default(0)   // denormalized counter, updated in a transaction
+  seatsUsed   Int        @default(0) // denormalized counter, updated in a transaction
   createdAt   DateTime   @default(now())
   startedAt   DateTime?
   completedAt DateTime?
@@ -86,39 +88,51 @@ model Pool {
 
 // One passenger's request; becomes a member of a Pool once matched
 model RideRequest {
-  id              String     @id @default(uuid())
-  passengerId     String
-  passenger       User       @relation(fields: [passengerId], references: [id])
+  id          String @id @default(uuid())
+  passengerId String
+  passenger   User   @relation(fields: [passengerId], references: [id])
 
-  pickupZone      String     // predefined Dhaka area, e.g. "Banani"
-  destinationZone String     // e.g. "Mohakhali"
+  pickupZone      String // predefined Dhaka area, e.g. "Banani"
+  destinationZone String // e.g. "Mohakhali"
   pickupLat       Float?
   pickupLng       Float?
   destLat         Float?
   destLng         Float?
 
-  seats           Int        @default(1)
+  seats Int @default(1)
 
-  poolId          String?
-  pool            Pool?      @relation(fields: [poolId], references: [id])
+  poolId String?
+  pool   Pool?   @relation(fields: [poolId], references: [id])
 
-  status          RideStatus @default(REQUESTED)
+  status RideStatus @default(REQUESTED)
 
-  baseFare        Int        // stored in paisa (integer) — see note below
-  distanceCharge  Int
-  poolDiscount    Int        @default(0)
-  finalFare       Int        // baseFare + distanceCharge - poolDiscount
+  baseFare       Int // stored in paisa (integer) — see note below
+  distanceCharge Int
+  poolDiscount   Int @default(0)
+  finalFare      Int // baseFare + distanceCharge - poolDiscount
 
-  paymentMethod   PaymentMethod @default(CASH)
-  paid            Boolean    @default(false)
+  paymentMethod PaymentMethod @default(CASH)
+  paid          Boolean       @default(false)
 
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  statusHistory   RideStatusHistory[]
+  statusHistory RideStatusHistory[]
+  declines      PoolDecline[]
 
   @@index([status])
   @@index([poolId])
+}
+
+model PoolDecline {
+  id            String      @id @default(uuid())
+  rideRequestId String
+  rideRequest   RideRequest @relation(fields: [rideRequestId], references: [id])
+  vehicleId     String
+  vehicle       Vehicle     @relation(fields: [vehicleId], references: [id])
+  createdAt     DateTime    @default(now())
+
+  @@unique([rideRequestId, vehicleId])
 }
 
 // Immutable audit trail — one row per transition
