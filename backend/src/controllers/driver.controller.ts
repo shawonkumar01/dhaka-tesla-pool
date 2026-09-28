@@ -246,9 +246,15 @@ export async function declinePool(req: Request, res: Response) {
   }
 
   await prisma.$transaction(async (tx) => {
-    const soloFare = calculateFare(false);
-
     for (const ride of activeRides) {
+      // Solo fare for this rider's own trip (the pool discount is removed)
+      const soloFare = calculateFare(
+        ride.pickupZone,
+        ride.destinationZone,
+        ride.seats,
+        false,
+      );
+
       // Remember the decline so this ride is never offered to this vehicle again
       await tx.poolDecline.create({
         data: { rideRequestId: ride.id, vehicleId: vehicle.id },

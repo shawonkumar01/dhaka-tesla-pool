@@ -69,7 +69,12 @@ export async function tryMatch(tx: Tx, ride: WaitingRide): Promise<boolean> {
       continue;
 
     const newSeats = row.seatsUsed + ride.seats;
-    const fare = calculateFare(true);
+    const fare = calculateFare(
+      ride.pickupZone,
+      ride.destinationZone,
+      ride.seats,
+      true,
+    );
     // A joiner inherits ACCEPTED if the driver already accepted this pool
     const joinStatus: RideStatus =
       riders[0].status === "ACCEPTED" ? "ACCEPTED" : "MATCHED";
@@ -83,13 +88,14 @@ export async function tryMatch(tx: Tx, ride: WaitingRide): Promise<boolean> {
     });
 
     // Riders already in the pool now also share, so they get the discount too
-    await tx.rideRequest.updateMany({
-      where: { poolId: pool.id, status: { not: "CANCELLED" }, poolDiscount: 0 },
-      data: {
-        poolDiscount: fare.poolDiscount,
-        finalFare: { decrement: fare.poolDiscount },
-      },
-    });
+    for (const r of riders) {
+      if (r.poolDiscount > 0) continue; // already discounted
+      const f = calculateFare(r.pickupZone, r.destinationZone, r.seats, true);
+      await tx.rideRequest.update({
+        where: { id: r.id },
+        data: { poolDiscount: f.poolDiscount, finalFare: f.finalFare },
+      });
+    }
 
     await tx.rideRequest.update({
       where: { id: ride.id },
