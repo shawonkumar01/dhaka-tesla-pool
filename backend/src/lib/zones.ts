@@ -20,6 +20,17 @@ const COMPATIBLE_DESTINATIONS: Record<string, string[]> = {
   Dhanmondi: ["Farmgate"],
   Farmgate: ["Dhanmondi"],
 };
+export const ZONE_COORDS: Record<string, { lat: number; lng: number }> = {
+  'Banani':      { lat: 23.7937, lng: 90.4066 },
+  'Gulshan 1':   { lat: 23.7806, lng: 90.4163 },
+  'Gulshan 2':   { lat: 23.7925, lng: 90.4148 },
+  'Mohakhali':   { lat: 23.7775, lng: 90.4055 },
+  'Dhanmondi':   { lat: 23.7461, lng: 90.3742 },
+  'Mirpur':      { lat: 23.8069, lng: 90.3687 },
+  'Uttara':      { lat: 23.8759, lng: 90.3795 },
+  'Farmgate':    { lat: 23.7561, lng: 90.3872 },
+  'Bashundhara': { lat: 23.8193, lng: 90.4526 },
+};
 
 export function isZoneValid(zone: string): boolean {
   return (DHAKA_ZONES as readonly string[]).includes(zone);

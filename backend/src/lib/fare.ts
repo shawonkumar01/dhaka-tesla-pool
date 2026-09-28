@@ -1,13 +1,38 @@
-// All amounts in poysha (1 Taka = 100 poysha) — integers only, avoids float rounding errors.
-const BASE_FARE = 5000;       // 50.00 Taka flat base
-const PER_ZONE_HOP_CHARGE = 3000; // 30.00 Taka — flat distance charge per request (simplified, no real routing)
-const POOL_DISCOUNT = 1500;   // 15.00 Taka discount when sharing a pool with >=1 other passenger
+import { ZONE_COORDS } from './zones';
 
-export function calculateFare(isPooled: boolean) {
-  const baseFare = BASE_FARE;
-  const distanceCharge = PER_ZONE_HOP_CHARGE;
-  const poolDiscount = isPooled ? POOL_DISCOUNT : 0;
-  const finalFare = baseFare + distanceCharge - poolDiscount;
+// All money is integer poysha (1 Taka = 100 poysha)
+export const BASE_FARE = 3000;          // ৳30 per seat
+export const PER_KM = 2000;             // ৳20 per km per seat
+export const POOL_DISCOUNT_PERCENT = 20;
+const MIN_DISTANCE_HUNDREDTHS = 100;    // minimum 1.00 km
 
-  return { baseFare, distanceCharge, poolDiscount, finalFare };
+function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// Distance in hundredths of a km (integer), e.g. 176 = 1.76 km
+export function distanceHundredthsKm(pickupZone: string, destinationZone: string): number {
+  const km = haversineKm(ZONE_COORDS[pickupZone], ZONE_COORDS[destinationZone]);
+  return Math.max(MIN_DISTANCE_HUNDREDTHS, Math.round(km * 100));
+}
+
+export function calculateFare(
+  pickupZone: string,
+  destinationZone: string,
+  seats: number,
+  isPooled: boolean
+) {
+  const hundredths = distanceHundredthsKm(pickupZone, destinationZone);
+  const baseFare = BASE_FARE * seats;
+  const distanceCharge = hundredths * (PER_KM / 100) * seats; // 20 poysha per 0.01 km
+  const subtotal = baseFare + distanceCharge;
+  const poolDiscount = isPooled ? Math.round((subtotal * POOL_DISCOUNT_PERCENT) / 100) : 0;
+  return { baseFare, distanceCharge, poolDiscount, finalFare: subtotal - poolDiscount };
 }
