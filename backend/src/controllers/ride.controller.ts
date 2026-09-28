@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import prisma from "../lib/prisma";
-import { isZoneValid } from "../lib/zones";
+import { isZoneValid, ZONE_COORDS } from "../lib/zones";
 import { calculateFare } from "../lib/fare";
 import { tryMatch, safeDispatch } from "../lib/matching";
 
@@ -23,7 +23,9 @@ export async function createRideRequest(req: Request, res: Response) {
     return res.status(400).json({ error: "Invalid zone" });
   }
 
-  const fare = calculateFare(false); // solo fare; tryMatch applies the discount if pooled
+  const fare = calculateFare(pickupZone, destinationZone, seats, false);
+  const p = ZONE_COORDS[pickupZone];
+  const d = ZONE_COORDS[destinationZone];
 
   const ride = await prisma.$transaction(async (tx) => {
     const created = await tx.rideRequest.create({
@@ -32,6 +34,10 @@ export async function createRideRequest(req: Request, res: Response) {
         pickupZone,
         destinationZone,
         seats,
+        pickupLat: p.lat,
+        pickupLng: p.lng,
+        destLat: d.lat,
+        destLng: d.lng,
         status: "REQUESTED",
         ...fare,
         statusHistory: { create: [{ toStatus: "REQUESTED" }] },
@@ -71,6 +77,22 @@ export async function getRideById(req: Request, res: Response) {
   }
 
   res.json({ ride });
+}
+export async function estimateFare(req: Request, res: Response) {
+  const parsed = createRideSchema.safeParse({
+    pickupZone: req.query.pickupZone,
+    destinationZone: req.query.destinationZone,
+    seats: Number(req.query.seats ?? 1),
+  });
+  if (!parsed.success) return res.status(400).json({ error: "Invalid query" });
+  const { pickupZone, destinationZone, seats } = parsed.data;
+  if (!isZoneValid(pickupZone) || !isZoneValid(destinationZone)) {
+    return res.status(400).json({ error: "Invalid zone" });
+  }
+  res.json({
+    solo: calculateFare(pickupZone, destinationZone, seats, false),
+    pooled: calculateFare(pickupZone, destinationZone, seats, true),
+  });
 }
 
 export async function cancelRide(req: Request, res: Response) {
