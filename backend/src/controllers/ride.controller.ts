@@ -129,10 +129,30 @@ export async function estimateFare(req: Request, res: Response) {
     return res.status(400).json({ error: "Invalid zone" });
   }
 
+  // A quick heads-up signal for the UI — not the authoritative matcher.
+  // True if either a free vehicle is currently in this zone, or an open
+  // pool already picking up from this zone could still take more riders.
+  // Ignores decline history and precise compatibility, unlike tryMatch.
+  const [openVehicle, openPool] = await Promise.all([
+    prisma.vehicle.findFirst({
+      where: {
+        isOnline: true,
+        currentZone: pickupZone,
+        capacity: { gte: seats },
+      },
+    }),
+    prisma.pool.findFirst({
+      where: { status: "OPEN", vehicle: { isOnline: true } },
+      include: { rideRequests: { take: 1, select: { pickupZone: true } } },
+    }),
+  ]);
+  const poolInZone = openPool?.rideRequests[0]?.pickupZone === pickupZone;
+
   res.json({
     distanceKm: distanceHundredthsKm(pickupZone, destinationZone) / 100,
     solo: calculateFare(pickupZone, destinationZone, seats, false),
     pooled: calculateFare(pickupZone, destinationZone, seats, true),
+    driversAvailable: Boolean(openVehicle) || poolInZone,
   });
 }
 

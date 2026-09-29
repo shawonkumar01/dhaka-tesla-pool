@@ -39,9 +39,11 @@ interface Estimate {
   distanceKm: number;
   solo: Fare;
   pooled: Fare;
+  driversAvailable: boolean;
 }
 
-const taka = (poysha: number) => `৳${(poysha / 100).toFixed(2)}`;
+const taka = (poysha?: number) =>
+  typeof poysha === "number" ? `৳${(poysha / 100).toFixed(2)}` : "—";
 
 const statusColors: Record<string, string> = {
   REQUESTED: "bg-amber-100 text-amber-800",
@@ -91,6 +93,7 @@ export default function PassengerDashboard() {
     return () => clearInterval(interval);
   }, []);
 
+  // Refetch the fare + availability estimate whenever the form changes
   useEffect(() => {
     let cancelled = false;
     api
@@ -104,7 +107,7 @@ export default function PassengerDashboard() {
         if (!cancelled) setEstimate(null);
       });
     return () => {
-      cancelled = true;
+      cancelled = true; // ignore stale responses when the form changes quickly
     };
   }, [pickupZone, destinationZone, seats]);
 
@@ -199,26 +202,36 @@ export default function PassengerDashboard() {
             />
           </div>
 
-          {estimate && (
-            <div className="rounded-xl border border-green-100 bg-green-50 p-4 text-sm">
-              <div className="flex justify-between items-baseline">
-                <span className="text-gray-600">
-                  Estimated fare · {estimate.distanceKm.toFixed(2)} km
-                </span>
-                <span className="text-lg font-semibold text-gray-900">
-                  {taka(estimate.solo.finalFare)}
-                </span>
+          {estimate &&
+            typeof estimate.distanceKm === "number" &&
+            estimate.solo &&
+            estimate.pooled && (
+              <div className="rounded-xl border border-green-100 bg-green-50 p-4 text-sm">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-gray-600">
+                    Estimated fare · {estimate.distanceKm.toFixed(2)} km
+                  </span>
+                  <span className="text-lg font-semibold text-gray-900">
+                    {taka(estimate.solo.finalFare)}
+                  </span>
+                </div>
+                <p className="mt-1 text-green-700">
+                  Share the ride and pay {taka(estimate.pooled.finalFare)} (save{" "}
+                  {taka(estimate.pooled.poolDiscount)})
+                </p>
+                <p className="mt-2 text-xs text-gray-400">
+                  Base {taka(estimate.solo.baseFare)} + distance{" "}
+                  {taka(estimate.solo.distanceCharge)}, minus 20% if pooled
+                </p>
+                {!estimate.driversAvailable && (
+                  <p className="mt-2 text-xs text-amber-600">
+                    No drivers currently available in {pickupZone}. You can
+                    still request — we&apos;ll match you as soon as one comes
+                    online.
+                  </p>
+                )}
               </div>
-              <p className="mt-1 text-green-700">
-                Share the ride and pay {taka(estimate.pooled.finalFare)} (save{" "}
-                {taka(estimate.pooled.poolDiscount)})
-              </p>
-              <p className="mt-2 text-xs text-gray-400">
-                Base {taka(estimate.solo.baseFare)} + distance{" "}
-                {taka(estimate.solo.distanceCharge)}, minus 20% if pooled
-              </p>
-            </div>
-          )}
+            )}
 
           {error && <p className="text-red-500 text-sm">{error}</p>}
 
