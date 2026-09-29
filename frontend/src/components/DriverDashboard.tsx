@@ -22,6 +22,7 @@ interface RideRequest {
   seats: number;
   status: string;
   finalFare: number;
+  paid: boolean;
   passenger: { id: string; name: string; email: string };
 }
 
@@ -41,11 +42,28 @@ interface Vehicle {
   pools: Pool[];
 }
 
+interface PastRide {
+  id: string;
+  passenger: { name: string };
+  finalFare: number;
+  status: string;
+  paid: boolean;
+}
+interface PastPool {
+  id: string;
+  status: string;
+  seatsUsed: number;
+  createdAt: string;
+  completedAt: string | null;
+  rideRequests: PastRide[];
+}
+
 const NEXT_LABEL: Record<string, string> = {
   MATCHED: "Accept Pool",
   ACCEPTED: "Mark Driver Arrived",
   DRIVER_ARRIVED: "Start Trip",
-  STARTED: "Complete Trip",
+  STARTED: "End Trip",
+  AWAITING_PAYMENT: "Complete Trip",
 };
 
 const STAGE_LABEL: Record<string, string> = {
@@ -53,6 +71,7 @@ const STAGE_LABEL: Record<string, string> = {
   ACCEPTED: "Accepted",
   DRIVER_ARRIVED: "Arrived at pickup",
   STARTED: "Trip in progress",
+  AWAITING_PAYMENT: "Trip ended — awaiting payment",
 };
 
 export default function DriverDashboard() {
@@ -64,6 +83,9 @@ export default function DriverDashboard() {
 
   const [vehicleName, setVehicleName] = useState("");
   const [capacity, setCapacity] = useState(3);
+
+  const [history, setHistory] = useState<PastPool[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   async function fetchStatus() {
     try {
@@ -82,9 +104,22 @@ export default function DriverDashboard() {
     }
   }
 
+  async function fetchHistory() {
+    try {
+      const res = await api.get("/driver/history");
+      setHistory(res.data.pools);
+    } catch {
+      // non-critical
+    }
+  }
+
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 4000);
+    fetchHistory();
+    const interval = setInterval(() => {
+      fetchStatus();
+      fetchHistory();
+    }, 4000);
     return () => clearInterval(interval);
   }, []);
 
@@ -122,6 +157,7 @@ export default function DriverDashboard() {
     try {
       await api.post(`/driver/pools/${poolId}/advance`);
       await fetchStatus();
+      await fetchHistory();
     } catch (err: any) {
       setError(err.response?.data?.error || "Failed to advance ride");
     } finally {
@@ -181,8 +217,12 @@ export default function DriverDashboard() {
     );
   }
 
-  const activePool = vehicle.pools[0]; // one active pool at a time, by design
+  const activePool = vehicle.pools[0];
   const currentStatus = activePool?.rideRequests[0]?.status;
+  const allPaid =
+    currentStatus === "AWAITING_PAYMENT"
+      ? activePool!.rideRequests.every((r) => r.paid)
+      : true;
 
   return (
     <div className="space-y-8">
@@ -266,7 +306,14 @@ export default function DriverDashboard() {
                 {currentStatus && NEXT_LABEL[currentStatus] && (
                   <button
                     onClick={() => advancePool(activePool.id)}
-                    disabled={busy}
+                    disabled={
+                      busy || (currentStatus === "AWAITING_PAYMENT" && !allPaid)
+                    }
+                    title={
+                      currentStatus === "AWAITING_PAYMENT" && !allPaid
+                        ? "Waiting for all riders to pay"
+                        : undefined
+                    }
                     className="bg-green-600 text-white text-sm px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50"
                   >
                     {NEXT_LABEL[currentStatus]}
@@ -287,12 +334,70 @@ export default function DriverDashboard() {
                       {r.pickupZone} → {r.destinationZone}
                     </p>
                   </div>
-                  <p className="text-sm font-medium">
-                    ৳{(r.finalFare / 100).toFixed(2)}
-                  </p>
+                  <div className="text-right">
+                    <p className="text-sm font-medium">
+                      ৳{(r.finalFare / 100).toFixed(2)}
+                    </p>
+                    {currentStatus === "AWAITING_PAYMENT" && (
+                      <p
+                        className={`text-xs ${
+                          r.paid ? "text-green-600" : "text-amber-600"
+                        }`}
+                      >
+                        {r.paid ? "Paid" : "Unpaid"}
+                      </p>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <button
+          onClick={() => setShowHistory((s) => !s)}
+          className="text-sm font-medium text-gray-500 underline mb-3"
+        >
+          {showHistory ? "Hide" : "Show"} ride history ({history.length})
+        </button>
+
+        {showHistory && (
+          <div className="space-y-3">
+            {history.length === 0 && (
+              <p className="text-gray-400 text-sm">No past trips yet.</p>
+            )}
+            {history.map((pool) => (
+              <div key={pool.id} className="bg-white p-4 rounded-xl shadow-sm">
+                <div className="flex justify-between text-sm text-gray-500 mb-2">
+                  <span>{pool.status}</span>
+                  <span>{new Date(pool.createdAt).toLocaleString()}</span>
+                </div>
+                <div className="divide-y">
+                  {pool.rideRequests.map((r) => (
+                    <div
+                      key={r.id}
+                      className="py-2 flex justify-between items-center text-sm"
+                    >
+                      <span>{r.passenger.name}</span>
+                      <span className="flex items-center gap-2">
+                        ৳{(r.finalFare / 100).toFixed(2)}
+                        {r.paid ? (
+                          <span className="text-green-600 text-xs font-medium">
+                            Paid
+                          </span>
+                        ) : (
+                          <span className="text-amber-600 text-xs font-medium">
+                            Unpaid
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>
