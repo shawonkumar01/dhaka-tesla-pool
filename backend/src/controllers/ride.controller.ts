@@ -50,6 +50,44 @@ export async function createRideRequest(req: Request, res: Response) {
   res.status(201).json({ rideRequest: ride });
 }
 
+const paySchema = z.object({
+  paymentMethod: z.enum(["CASH", "TESLAPAY"]).optional(),
+});
+
+export async function payForRide(req: Request, res: Response) {
+  const id = req.params.id as string;
+  const passengerId = req.user!.userId;
+
+  const parsed = paySchema.safeParse(req.body ?? {});
+  if (!parsed.success)
+    return res.status(400).json({ error: parsed.error.flatten() });
+
+  const ride = await prisma.rideRequest.findUnique({ where: { id } });
+  if (!ride) return res.status(404).json({ error: "Ride not found" });
+  if (ride.passengerId !== passengerId) {
+    return res.status(403).json({ error: "Not your ride" });
+  }
+  if (ride.status !== "AWAITING_PAYMENT") {
+    return res
+      .status(400)
+      .json({ error: "Payment is only accepted after the trip ends" });
+  }
+  if (ride.paid) {
+    return res.status(400).json({ error: "Ride is already paid" });
+  }
+
+  const updated = await prisma.rideRequest.update({
+    where: { id },
+    data: {
+      paid: true,
+      ...(parsed.data.paymentMethod
+        ? { paymentMethod: parsed.data.paymentMethod }
+        : {}),
+    },
+  });
+
+  res.json({ ride: updated });
+}
 export async function getMyRides(req: Request, res: Response) {
   const passengerId = req.user!.userId;
 
