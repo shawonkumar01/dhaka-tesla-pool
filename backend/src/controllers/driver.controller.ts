@@ -208,6 +208,16 @@ export async function advancePoolStatus(req: Request, res: Response) {
         where: { id: pool.id },
         data: { status: "COMPLETED", completedAt: new Date() },
       });
+
+      // The driver ends up at the drop-off zone of this trip, not wherever
+      // they went online — so the next match uses the vehicle's real location.
+      const lastDestination = activeRides[0]?.destinationZone;
+      if (lastDestination) {
+        await tx.vehicle.update({
+          where: { id: vehicle.id },
+          data: { currentZone: lastDestination },
+        });
+      }
     } else if (nextStatus === "STARTED") {
       await tx.pool.update({
         where: { id: pool.id },
