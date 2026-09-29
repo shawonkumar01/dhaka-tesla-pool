@@ -15,6 +15,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+  test-db:
+    image: postgres:16
+    restart: "no"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dhaka_tesla_pool_test
+    ports:
+      - "5433:5432"
 
   backend:
     build: ./backend
