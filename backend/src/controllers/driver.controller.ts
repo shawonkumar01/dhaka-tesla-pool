@@ -43,7 +43,7 @@ export async function setOnlineStatus(req: Request, res: Response) {
     },
   });
 
-  if (parsed.data.isOnline) await safeDispatch(); // a driver coming online picks up waiting riders
+  if (parsed.data.isOnline) await safeDispatch();
 
   res.json({ vehicle: updated });
 }
@@ -139,7 +139,8 @@ const VALID_TRANSITIONS: Record<string, string> = {
   MATCHED: "ACCEPTED",
   ACCEPTED: "DRIVER_ARRIVED",
   DRIVER_ARRIVED: "STARTED",
-  STARTED: "COMPLETED",
+  STARTED: "AWAITING_PAYMENT",
+  AWAITING_PAYMENT: "COMPLETED",
 };
 
 export async function advancePoolStatus(req: Request, res: Response) {
@@ -176,6 +177,16 @@ export async function advancePoolStatus(req: Request, res: Response) {
       .json({ error: `Cannot advance from status ${currentRideStatus}` });
   }
 
+  // The trip can only be closed once every active rider has paid
+  if (nextStatus === "COMPLETED") {
+    const unpaid = activeRides.filter((r) => !r.paid);
+    if (unpaid.length > 0) {
+      return res.status(400).json({
+        error: "All riders must pay before the trip can be completed",
+      });
+    }
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     await tx.rideRequest.updateMany({
       where: { poolId: pool.id, status: { not: "CANCELLED" } },
@@ -209,7 +220,7 @@ export async function advancePoolStatus(req: Request, res: Response) {
     });
   });
 
-  if (nextStatus === "COMPLETED") await safeDispatch(); // vehicle is free again
+  if (nextStatus === "COMPLETED") await safeDispatch();
 
   res.json({ rides: result });
 }
@@ -234,7 +245,6 @@ export async function declinePool(req: Request, res: Response) {
   if (pool.vehicleId !== vehicle.id)
     return res.status(403).json({ error: "Not your vehicle's pool" });
 
-  // Only a pool where every live rider is still MATCHED can be declined
   const activeRides = pool.rideRequests.filter((r) => r.status !== "CANCELLED");
   if (
     activeRides.length === 0 ||
@@ -247,7 +257,6 @@ export async function declinePool(req: Request, res: Response) {
 
   await prisma.$transaction(async (tx) => {
     for (const ride of activeRides) {
-      // Solo fare for this rider's own trip (the pool discount is removed)
       const soloFare = calculateFare(
         ride.pickupZone,
         ride.destinationZone,
@@ -255,12 +264,10 @@ export async function declinePool(req: Request, res: Response) {
         false,
       );
 
-      // Remember the decline so this ride is never offered to this vehicle again
       await tx.poolDecline.create({
         data: { rideRequestId: ride.id, vehicleId: vehicle.id },
       });
 
-      // Riders go back to waiting and lose the pool discount
       await tx.rideRequest.update({
         where: { id: ride.id },
         data: {
@@ -287,7 +294,7 @@ export async function declinePool(req: Request, res: Response) {
     });
   });
 
-  await safeDispatch(); // offer these riders to the next eligible driver
+  await safeDispatch();
 
   res.json({ message: "Pool declined; riders returned to the waiting queue" });
 }
