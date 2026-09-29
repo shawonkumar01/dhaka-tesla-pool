@@ -24,6 +24,8 @@ interface Ride {
   finalFare: number;
   poolId: string | null;
   createdAt: string;
+  paid: boolean;
+  paymentMethod: string;
 }
 
 interface Fare {
@@ -39,7 +41,6 @@ interface Estimate {
   pooled: Fare;
 }
 
-// Money is stored as integer poysha; convert to Taka only for display
 const taka = (poysha: number) => `৳${(poysha / 100).toFixed(2)}`;
 
 const statusColors: Record<string, string> = {
@@ -48,6 +49,7 @@ const statusColors: Record<string, string> = {
   ACCEPTED: "bg-teal-100 text-teal-800",
   DRIVER_ARRIVED: "bg-blue-100 text-blue-800",
   STARTED: "bg-indigo-100 text-indigo-800",
+  AWAITING_PAYMENT: "bg-orange-100 text-orange-800",
   COMPLETED: "bg-green-100 text-green-800",
   CANCELLED: "bg-gray-100 text-gray-500",
 };
@@ -58,6 +60,7 @@ const statusLabels: Record<string, string> = {
   ACCEPTED: "DRIVER ACCEPTED",
   DRIVER_ARRIVED: "DRIVER ARRIVED",
   STARTED: "IN PROGRESS",
+  AWAITING_PAYMENT: "TRIP ENDED — PAYMENT DUE",
   COMPLETED: "COMPLETED",
   CANCELLED: "CANCELLED",
 };
@@ -84,11 +87,10 @@ export default function PassengerDashboard() {
 
   useEffect(() => {
     fetchRides();
-    const interval = setInterval(fetchRides, 4000); // simple polling for status updates
+    const interval = setInterval(fetchRides, 4000);
     return () => clearInterval(interval);
   }, []);
 
-  // Refetch the fare estimate whenever the form changes
   useEffect(() => {
     let cancelled = false;
     api
@@ -102,7 +104,7 @@ export default function PassengerDashboard() {
         if (!cancelled) setEstimate(null);
       });
     return () => {
-      cancelled = true; // ignore stale responses when the form changes quickly
+      cancelled = true;
     };
   }, [pickupZone, destinationZone, seats]);
 
@@ -132,6 +134,16 @@ export default function PassengerDashboard() {
       await fetchRides();
     } catch (err: any) {
       setError(err.response?.data?.error || "Cancel failed");
+    }
+  }
+
+  async function handlePay(id: string) {
+    setError("");
+    try {
+      await api.post(`/rides/${id}/pay`);
+      await fetchRides();
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Payment failed");
     }
   }
 
@@ -250,6 +262,27 @@ export default function PassengerDashboard() {
                 >
                   {statusLabels[ride.status] ?? ride.status}
                 </span>
+
+                {ride.status === "AWAITING_PAYMENT" &&
+                  (ride.paid ? (
+                    <span className="text-xs text-green-600 font-medium">
+                      Paid · waiting for driver
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => handlePay(ride.id)}
+                      className="text-xs bg-green-600 text-white px-3 py-1 rounded-full hover:bg-green-700"
+                    >
+                      Pay Now
+                    </button>
+                  ))}
+
+                {ride.status === "COMPLETED" && ride.paid && (
+                  <span className="text-xs text-green-600 font-medium">
+                    Paid
+                  </span>
+                )}
+
                 {CANCELLABLE.includes(ride.status) && (
                   <button
                     onClick={() => handleCancel(ride.id)}
